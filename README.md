@@ -2,7 +2,7 @@
 
 This repository contains code and input data sets that run a simulation assessing RMSE of within- and out-of-market comparison groups in a difference-in-differences analysis.  The goal of the repository is to share the code and data sets for other researchers to use, either to validate the results of a (hopefully forthcoming) research methods article or to use as a template for their own simulation studies.
 
-This repository is intended as an archive rather than a living or working project and thus is *read-only*.
+This repository is intended as an archive rather than a living or working project.
 
 Files are organized into data and code folders.
 
