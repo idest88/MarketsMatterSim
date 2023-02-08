@@ -1,0 +1,544 @@
+---
+title: "Hierarchical comparison group selection"
+author: "Laura A Hatfield"
+date: "`r format(Sys.Date(),'%b %d, %Y')`"
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+bibliography: pcf_simulations.bib
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(ggrepel)
+library(broom)
+library(cowplot)
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE
+)
+theme_set(theme_minimal())
+
+## Convenience function
+expit <- function(x) exp(x)/(1+exp(x))
+
+## Year-month codes for convenience
+ym.codes <- c(paste0(rep(2019,12),rep("_M",12),str_pad(1:12,width=2,side="left",pad="0")),
+            paste0(rep(2020,12),rep("_M",12),str_pad(1:12,width=2,side="left",pad="0")),
+            paste0(rep(2021,12),rep("_M",12),str_pad(1:12,width=2,side="left",pad="0")))
+
+
+## This document loads the following:
+# CPC_plus_counts.csv
+# slope_sds_asof08042021.csv
+# cvd_totexp_analytic_data_060321.xlsx
+# 2021-08-20_matching_scenarios_params.xlsx
+
+## It also depends on:
+# 2021-09-15_simulate_function.R
+# sim_analyze.R
+
+```
+
+# Background
+The Primary Care First (PCF) is a 5-year, multi-payer alternative payment model that CMS is introducing into 26 regions (which are states or parts of states) in Jan 2021/Jan 2022. Of these regions, 18 were previously offered the Comprehensive Primary Care Plus (CPC+) model, which comprised two tracks and began in 2017-18.
+
+Advanced primary care practices can join the general model (PCF-G) and may also join a model for seriously ill populations (SIP). The payment model includes a population-based professional payment and a flat fee for primary care visits plus a performance-based adjustment of up to 50% of revenue. The SIP intervention adds assignment of SIP patients who lack a primary care provider or care coordination and additional one-time payments.
+
+The analysis plan for the Primary Care First (PCF) project calls for a difference-in-difference (DID) analysis comparing total spending and hospitalization in practices that participate (before versus after the intervention begins) to practices that do not. Following the model of the previous CPC+ evaluations, the plan was to match regions that were not offered the program to the PCF regions and then within those regions, further match practices that were similar to the participating practices. However, the massive disruptions to primary care wrought by COVID 19 made between-market shocks a more pressing concern. The research question is whether we can find evidence in the data for the extent of the between- versus within-market selection pressures and shocks that might threaten to bias the study design. 
+
+# Methods
+To investigate the tradeoffs between within- and between-market factors in choosing comparison groups, we conducted a simulation study.
+
+## Data-generating model
+For each market $m=1,\ldots,N_m$ we draw an indicator of being selected for the voluntary program. We also draw market-level intercepts and slopes from a bivariate normal distribution. 
+
+\begin{align}
+s_m &\sim Bern(p_{sel}) \\
+\left(\begin{array}{c}
+  \alpha_m \\
+  \beta_m 
+\end{array} \right) &\sim N\left( \left(
+\begin{array}{c}
+  \mu_{\alpha}\\
+  \mu_{\beta} 
+\end{array}\right), \Sigma_1\right) \\
+\Sigma_1 &= 
+    \left( \begin{array}{cc} 
+      \sigma^2_{1\alpha} & \rho_1 \sigma_{1\alpha}\sigma_{1\beta} \\ 
+      \rho_1 \sigma_{1\alpha}\sigma_{1\beta} & \sigma^2_{1\beta}
+    \end{array} \right) \\
+\end{align}
+
+We also draw two market-level COVID impact parameters, one for the April 2020 shock ($\omega_{1m}$) and second for the slope of the subsequent recovery ($\omega_{2m}$). In the non-selected markets, these are drawn from:
+
+\begin{align}
+z_{1m} &\sim N(\mu_{cov},\sigma^2_{cov}) \\
+z_{2m} &\sim N(\mu_{rec},\sigma^2_{rec}) \\
+\omega_{1m} &= -|z_{1m}| \\
+\omega_{2m} &= |z_{2m}| 
+\end{align}
+
+In selected markets ($s_m =1$), the initial COVID impacts, recovery slopes, and their variances are multiplied by $\phi_{cov}$, $\phi_{rec}$), and $\phi_{cvar}$, respectively.
+
+\begin{align}
+z_{1m} &\sim N(\phi_{cov}\mu_{cov},\phi^2_{cvar}\sigma^2_{cov}) \\
+z_{2m} &\sim N(\phi_{rec}\mu_{rec},\phi^2_{cvar}\sigma^2_{rec}) \\
+\omega_{1m} &= -|z_{1m}| \\
+\omega_{2m} &= |z_{2m}| 
+\end{align}
+
+### Practices in selected markets
+Next, we consider models for practice $i=1,\ldots,N_p$ in market $m$. For practices in selected markets, we generate a binary indicator for joining PCF. Then we generate practice-level intercepts $\alpha_i$ and slopes $\beta_i$ from a bivariate normal distribution centered around the the market-level intercepts and slopes, with adjustments for selection (joining tendency). The parameters $\gamma_1$ and $\gamma_2$  represent the differential intercepts and slopes of *non-joining practices* (net of matching).
+
+\begin{align}
+trt_i &\sim Bern(p_{join}) \\
+\left(\begin{array}{c}
+  \alpha_i\\
+  \beta_i
+\end{array}\right) & \sim N\left(
+\left(\begin{array}{c}
+  \alpha_{m(i)} - \gamma_1 (1-trt_i)\\
+  \beta_{m(i)} - \gamma_2 (1-trt_i)
+\end{array}\right),\Sigma_{2}\right)\\
+\Sigma_{2}            &= \left( \begin{array}{cc} 
+                       \sigma^2_{2\alpha} & \rho_2 \sigma_{2\alpha}\sigma_{2\beta} \\ 
+                       \rho_2 \sigma_{2\alpha}\sigma_{2\beta} & \sigma^2_{2\beta} \end{array} 
+                     \right)
+\end{align}
+
+### Practices in non-selected markets
+For practices in non-selected markets, the mean intercept and slope adjustment parameters $\theta_1$ and $\theta_2$ represent the differential intercepts and slopes of *a mixture of joining and non-joining practices* (net of matching).
+
+\begin{align}
+\left(
+\begin{array}{c}
+  \alpha_i\\
+  \beta_i
+\end{array}
+\right) & 
+\sim N\left(
+\left(
+\begin{array}{c}
+  \alpha_{m(i)} - \theta_1\\
+  \beta_{m(i)} - \theta_2
+\end{array}
+\right),\Sigma_{2}
+\right)
+\end{align}
+
+### Practice-level timeseries data
+Then we combine these with the practice-level intercepts and slopes to generate market-level timeseries data indexed by $t = 1,\ldots,48$, first without COVID ($y_{it}$) 
+
+$$
+y_{it} = \alpha_i + \beta_i t
+$$
+
+and then with the COVID impacts:
+
+\begin{align}
+y'_{it} &= \left\{ \begin{array}{ll} 
+  y_{it} & t < 16\\
+  y_{it} + \frac{y_{i14}}{100} \omega_{1m(i)} & t=16 \\
+  y_{it} + \frac{y_{i14}}{100} \omega_{1m(i)}(1-exp(-exp(-exp(1)\omega_{2m(i)}\frac{x-17}{48})) & t > 16\\
+  \end{array} \right .
+\end{align}
+
+## Selecting parameter values
+```{r load_analyze_real_data}
+## Create an empty object to hold the fixed parameters that don't vary across simulations
+fixed.params <- data.frame(N.m=NA,p.sel=NA,N.p.s=NA,N.p.n=NA,p.join=NA,p.match=NA,
+                           sig.1a=NA,sig.1b=NA,sig.2a=NA,sig.2b=NA,
+                           mu.covid=NA,sd.covid=NA,mu.recov=NA,sd.recov=NA,
+                           rho.1=NA,rho.2=NA,
+                           mu.alpha=NA,mu.beta=NA)
+
+#### Market-level data (comb.counts, hrr.dat) ####
+## HRR-level spending summaries through April 2021 (from Jake)
+hrr.raw <- readxl::read_excel("cvd_totexp_analytic_data_060321.xlsx") %>%
+  mutate(hrrnum=factor(hrrnum),hrrstate=factor(hrrstate),
+         yymm=as.integer(factor(paste0(year,"_M",str_pad(month,2,"left","0")),levels=ym.codes)))
+# Check for weird patterns at the end of the timeseries
+if (F) {
+  ggplot(hrr.raw,aes(x=yymm,y=mean_total_expend,group=hrrnum)) + 
+    geom_line() + theme(panel.grid.minor = element_blank()) +
+    scale_x_continuous(breaks=1:max(hrr.raw$yymm))
+}
+# Filter out the recent months without full runout of claims
+hrr.dat <- filter(hrr.raw,yymm < 28)
+
+# PARAM: Number of markets
+fixed.params$N.m <- dim(filter(hrr.dat,year==2019,month==1))[1]
+
+# PARAM: Probability a market is selected 
+fixed.params$p.sel <- (filter(hrr.dat,year==2019,month==1) %>% group_by(pcf_state) %>%
+                         summarize(count=n()) %>%
+                         ungroup() %>% mutate(total=sum(count),prop=count/total) %>%
+                         filter(pcf_state=="PCF"))$prop
+
+## CPC plus market and practice summary stats
+cpc.counts <- read_csv("CPC_plus_counts.csv")
+# NOTE: (from Jason in July 2020 email)
+# Count of the total number of practices in the HRR-state region.
+# The number of CPC+ practices includes only the practices in the relevant track, 
+# so to get the total number of CPC+ practices in a region, sum across the two tracks.
+# From Laura B email Aug 2021:
+# For the non-CPC+ regions, it’s unfortunately much trickier because something like 30% of all Track 1 or Track 2 comparison practices are matched comparisons for both interventions. In other words, you won’t get the total number of distinct comparison practices across both tracks if you sum across tracks… but you also won’t get the total number of distinct practices if you take the selected comparisons from only one of the two tracks. Maybe the best solution is to take whichever comparison group is bigger (I believe that’s Track 1) and use that. That effectively assumes we match at a lower C:T ratio for PCF than we did for CPC+… but I think that’s somewhat likely, anyway. That would give us about 3,000 treatment practices (summing across CPC+ tracks), which is close to the expected PCF total, and ~4,000 comparison practices I think.
+
+# PARAM: Expected Number of practices per non-selected market
+fixed.params$N.p.n <- round((filter(cpc.counts,Region=="Not CPC+",Participants=="All") %>% 
+  # Average over tracks 1 and 2
+  summarize(mean=mean(mean)))$mean,0)
+
+# PARAM: Probability a practice in a selected market participates 
+fixed.params$p.join <- (filter(cpc.counts,Region=="CPC+") %>% select(Track,Participants,mean) %>%
+  pivot_wider(names_from=Participants,values_from=mean) %>%
+  # compute participation in each track 
+  mutate(rate=Participating/(Participating+`Not Participating`)) %>%
+  # average over tracks
+  summarize(rate=mean(rate)))$rate
+
+# PARAM: Probability a practice is matched
+fixed.params$p.match <- (filter(cpc.counts,Region=="Not CPC+",Participants!="All") %>% select(Track,Participants,mean) %>%
+  pivot_wider(names_from=Participants,values_from=mean) %>%
+  # compute participation in each track 
+  mutate(rate=Participating/(Participating+`Not Participating`)) %>%
+  # average over tracks
+  summarize(rate=mean(rate)))$rate
+
+# PARAM: Expected number of practices per selected market
+# Obtained by back-calculating from real count of expected PCF practices (n=3225)
+fixed.params$N.p.s <- round(3225/(fixed.params$N.m*fixed.params$p.sel*fixed.params$p.join),0)
+
+#### Within- and between-market intercept and slope variances (input.vars) ####
+## Load new variance parameters from hierarchical Bayesian models (June 2021)
+input.vars <- read_csv("slope_sds_asof08042021.csv") %>%
+  mutate(group_lab=factor(group_lab,levels=c('CPC+','Internal','Matched C','External')))
+
+# PARAM: SD of market-level intercepts
+# Use market-level variance of external markets to avoid capturing 
+# heterogeneous intervention impacts  across markets 
+# (e.g, from differential participation rates)  
+fixed.params$sig.1a <- filter(input.vars,track_lab=="Track 1",nQtrs==12,
+                              group_lab=="Matched C",par_lab=="Market intercepts",scale=="dollars")$Mean
+# PARAM: SD of market-level slopes
+# Values in the spreadsheet are: change in (per bene per month) spending per *QUARTER* 
+# So divide by 3 to get SD on monthly slopes
+fixed.params$sig.1b <- filter(input.vars,track_lab=="Track 1",nQtrs==12,
+                              group_lab=="Matched C",par_lab=="Market slopes",scale=="dollars")$Mean/3
+
+# PARAM: SD of practice-level intercepts (within a market)
+# Use practice-level variance of selected markets to capture the impact of matching
+# or joining
+fixed.params$sig.2a = filter(input.vars,track_lab=="Track 1",nQtrs==12,
+                             group_lab=="CPC+",par_lab=="Practice intercepts",scale=="dollars")$Mean
+# PARAM: SD of practice-level slopes (within a market)
+# Values in the spreadsheet are: change in (per bene per month) spending per *QUARTER* 
+# So divide by 3 to get SD on monthly slopes
+fixed.params$sig.2b = filter(input.vars,track_lab=="Track 1",nQtrs==12,
+                  group_lab=="CPC+",par_lab=="Practice slopes",scale=="dollars")$Mean/3
+
+# PARAM: Correlation between market-level intercepts and slopes
+fixed.params$rho.1 <- filter(input.vars,track_lab=="Track 1",nQtrs==12,
+                             group_lab=="Matched C",par_lab=="Market-level correlation")$Mean
+# PARAM: Correlation between practice-level intercept and slope
+fixed.params$rho.2 <- filter(input.vars,track_lab=="Track 1",nQtrs==12,
+                             group_lab=="Matched C",par_lab=="Practice-level correlation")$Mean
+
+
+#### Market-level COVID mean impacts (covid.sumstats) ####
+## Baseline is Feb 2020
+baseline <- filter(hrr.dat,year=="2020",month==2) %>%
+  select(hrrnum,mean_total_expend) %>%
+  rename(baseline=mean_total_expend)
+# Measure percentage change relative to Feb 2020
+spend.dat_change <- hrr.dat %>%
+  left_join(baseline,by="hrrnum") %>%
+  arrange(hrrnum,yymm) %>%
+  group_by(hrrnum) %>%
+  mutate(pct_change=(mean_total_expend-baseline)/baseline*100) %>% ungroup()
+
+## Get gompertz parameters by fitting random intercept and slope models to Apr-Dec 2020 HRR-level data
+## This just gets initial recovery slopes
+temp.dat <- filter(spend.dat_change,year==2020,month>=4) %>% 
+  # Center the months around the COVID drop, which is April 2020 (yymm = 16)
+  mutate(relmonth=yymm-16)
+covid.fit <- lme4::lmer(pct_change~(1+relmonth|hrrnum),data=temp.dat)
+recovery.slopes <- as_tibble(coef(covid.fit)$hrrnum) %>% 
+  mutate(drop.covid=`(Intercept)`+summary(covid.fit)$coefficients['(Intercept)','Estimate'],
+         recov.covid=relmonth) %>%
+  bind_cols(hrrnum=rownames(coef(covid.fit)$hrrnum)) %>%
+  select(hrrnum,drop.covid,recov.covid)
+
+## Summary statistics about the drop and the recovery to use in the simulation
+covid.sumstats <- tibble(
+  'drop.mean'=mean(recovery.slopes$drop.covid),
+  'drop.sd'=attr(summary(covid.fit)$varcor$hrrnum,"stddev")[['(Intercept)']],
+  'slope.mean'=mean(recovery.slopes$recov.covid),
+  'slope.sd'=attr(summary(covid.fit)$varcor$hrrnum,"stddev")[['relmonth']])
+
+## Show the relationship of the Gompertz to the real data:
+if (F){
+  gompertz <- function(drop,slope,x){
+    -drop*(exp(-exp(-exp(1)*slope*((x-16)/48))))
+  }
+  temp.dat2 <- as_tibble(expand.grid(hrrnum=recovery.slopes$hrrnum,month=1:48)) %>%
+    left_join(recovery.slopes,by="hrrnum") %>%
+    mutate(spend.covid = ifelse(month<16,0,
+                                ifelse(month==16,drop.covid,
+                                ifelse(month>16,drop.covid+gompertz(drop.covid,recov.covid,month),NA))))
+  
+  panel1 <- ggplot(temp.dat2,aes(x=month,y=spend.covid)) + geom_line(aes(col=hrrnum)) +
+    scale_color_discrete(guide="none") + ggtitle('Simulated COVID') + 
+    scale_x_continuous(limits=c(1,48),breaks=seq(1,48,by=12)) +
+    scale_y_continuous(limits=c(-50,50)) + theme(panel.grid.minor=element_blank())
+  
+  panel2 <- ggplot(spend.dat_change,aes(x=yymm,y=pct_change)) + geom_line(aes(col=hrrnum)) +
+    scale_color_discrete(guide="none") + ggtitle('Real COVID') +
+    scale_x_continuous(limits=c(1,48),breaks=seq(1,48,by=12)) + 
+    scale_y_continuous(limits=c(-50,50))  + theme(panel.grid.minor=element_blank())
+  
+  cowplot::plot_grid(panel1,panel2)
+  rm(temp.dat2,panel1,panel2)
+}
+
+# PARAM: Mean of COVID drop
+fixed.params$mu.covid <- covid.sumstats$drop.mean
+# PARAM: SD of COVID drop
+fixed.params$sd.covid <- covid.sumstats$drop.sd
+# PARAM: Mean of COVID recovery
+fixed.params$mu.recov <- covid.sumstats$slope.mean
+# PARAM: SD of COVID recovery
+fixed.params$sd.recov <-covid.sumstats$slope.sd
+
+# Clean up:
+rm(baseline,spend.dat_change,recovery.slopes,covid.fit,temp.dat)
+
+#### Market-level mean intercepts (hrr.fit) ####
+# Center the month for better model fitting
+temp.dat <- filter(hrr.dat,year==2019) %>%
+  mutate(relmonth=yymm-6,relspend=mean_total_expend-mean(mean_total_expend))
+hrr.fit <- lme4::lmer(mean_total_expend~(relmonth|hrrnum),data=temp.dat)
+# Model is singular with an overall slope-- why?
+
+# PARAM: Mean of market-level intercepts
+fixed.params$mu.alpha <- summary(hrr.fit)$coefficients['(Intercept)','Estimate']
+# PARAM: Mean of market-level slopes
+fixed.params$mu.beta <- 0
+
+## Check that all the parameters have been populated:
+if (sum(is.na(fixed.params))>0) stop("fixed parameter values have not been populated")
+
+#### Selection and matching impacts (ddd.params) ####
+raw.params <- readxl::read_excel("2021-09-19_matching_scenarios_params.xlsx")
+ddd.params <- raw.params %>% 
+  mutate(Type=ifelse(Param%in%c('theta.2','gamma.2'),'Slope','Intercept'),
+         Location=ifelse(Param%in%c('gamma.1','gamma.2'),'Internal','External'),
+         Scenario=factor(Scenario)) %>%
+  # Divide slope differences by 3 to get differences on the scale of monthly slopes
+  # rather than quarterly as in the models fit to the CPC+ data
+  mutate(Value=ifelse(Type=="Slope",Value/3,Value))
+
+#### Parameters that vary ####
+varying.params <- ddd.params %>% select(Scenario,Param,Value) %>%
+  pivot_wider(names_from=Param,values_from=Value) %>%
+  mutate(theta.1=-75.5,
+         gamma.1=-86.2)
+
+my.params <- cbind(fixed.params,varying.params)
+# Just the D (break-even) scenarios
+my.params <- my.params[13:20,]
+
+## If you're actually running things today:
+if (F){
+  save(my.params,file=paste0(Sys.Date(),'_params.RData'))
+}
+## Run sim_analyze.R on the server
+## Requires: YYYY-MM-DD_params.RData and YYYY-MM-DD_simulate_function.R
+```
+
+```{r load_params}
+load("2021-09-19_params.RData") ## Get the params for the simulation scenario that generated the results
+```
+
+The number of markets is the number of HRR-states in the real data ($N_m=$ `r my.params$N.m[1]`) and the probability a market is selected also comes from those summary stats ($p_{sel}=$ `r round(my.params$p.sel[1],2)`).
+
+The number of practices within non-selected markets come from averaging the total number of practices across Tracks 1 and 2 in non-CPC+ markets ($N_{pn}=$ `r my.params$N.p.n[1]`) and the number of practices within selected markets comes from backing out the expected total count of practices for PCF ($N_{ps}=$ `r my.params$N.p.s[1]`). and the probability a practice joins comes from the averages in CPC+ ($p_{join}=$ `r round(my.params$p.join[1],2)`). We assume that $p_{match}=$ `r my.params$p.match[1]` of potential comparison practices (in both internal and external markets) are matched. 
+
+Between- and within-market intercept and slope variance-covariance parameters come from hierarchical Bayesian models fit to CPC+ data in 2017-2019. 
+
+We use market-level variances ($\sigma_{1\alpha}=$ `r round(my.params$sig.1a[1],1)`, $\sigma_{1\beta}=$ `r round(my.params$sig.1b[1],2)`) and correlation parameter ($\rho_1=$ `r round(my.params$rho.1[1],2)`) estimated from non-selected markets (i.e., matched controls) to avoid capturing increased across-market variance from heterogeneous intervention impacts (e.g., due to differential participation). 
+
+We use practice-level variances ($\sigma_{2\alpha}=$ `r round(my.params$sig.2a[1],1)`, $\sigma_{2\beta}=$ `r round(my.params$sig.2b[1],2)`) and correlation parameter ($\rho_2=$ `r round(my.params$rho.2[1],2)`) estimated from selected markets to capture the variance impact of matching, which we assume is similar to the variance impact of participation. 
+
+Note that these models expressed slopes as the change in \$/bene/month per *quarter*, so I have scaled the standard deviations by $1/3$ for use as the SD of slopes that are the change in \$/bene/month per *month*. 
+
+COVID impacts come from summary stats of 2020 HRR-level spending data, with the distribution of initial drops ($\mu_{cov}=$ `r round(my.params$mu.covid[1],1)`, $\sigma_{cov}=$ `r round(my.params$sd.covid[1],1)`) and recovery slopes ($\mu_{rec}=$ `r round(my.params$mu.recov[1],1)`, $\sigma_{rec}=$ `r round(my.params$sd.recov[1],1)`) expressed as percentage point changes relative to Feb 2020.
+
+The overall mean market-level intercept ($\mu_{\alpha}=$ `r round(my.params$mu.alpha[1],1)`) comes from a model fit to HRR-mont-level 2019 data. The overall mean slope is zero for simplicity ($\mu_{\beta}=$ `r round(my.params$mu.beta[1],1)`).
+
+Finally, the practice joining selection parameters come from analyses of CPC+ internal non-selected practices and CPC+ external selected practices with some assumptions about how much matching will help internal controls (the spreadsheets we worked on). Again, because those slopes were on the scale of change in \$/bene/month per *quarter*, I have scaled $\gamma_2$ and $\theta_2$ by $1/3$ to represent the impact on slopes that are changes in \$/bene/month per *month*. 
+
+Because the expected slopes in each group are:
+
+\begin{equation}
+\begin{array}{llll}
+                           & \mbox{Participant} & \mbox{Non-participant} & \mbox{Bias} \\
+\mbox{Selected market }     & \mu_{\beta}        & \mu_{\beta} - \gamma_2 & \propto \gamma_2 \\
+\mbox{Non-selected market } &                    & \mu_{\beta} - \theta_2 & \propto \theta_2 \\ 
+\end{array}
+\end{equation}
+
+we can easily summarize the expected bias of the simulation scenarios (without COVID). To compute the proportionality constant, note that: 
+
+\begin{align}
+y_t &= \alpha + \beta m_t \\
+\overline{post}-\overline{pre} &= \frac{1}{24} \sum_{t=25}^{48} y_t - \frac{1}{24} \sum_{t=1}^{24} y_t\\
+&= (\alpha + \beta \overline{m}_{t \in post}) - (\alpha + \beta \overline{m}_{t \in pre}) \\
+&= \beta (36.5 - 12.5)
+&= 24 \beta
+\end{align}
+
+so to find the deviation from the expected impact in this null simulation (0), we take the difference in slopes and multiply by $24$. 
+
+```{r plot_expected_bias}
+## Look at the predicted absolute bias
+bias.dat <- my.params %>%
+  mutate(abs.bias.int=abs(gamma.2)*3*12,
+         abs.bias.ext=abs(theta.2)*3*12) %>% 
+  pivot_longer(abs.bias.int:abs.bias.ext,names_to="Location") %>%
+  mutate(Location=factor(Location,
+                         levels=c('abs.bias.ext','abs.bias.int'),
+                         labels=c("External","Internal")))
+
+ggplot(bias.dat,aes(x=Scenario,y=value)) +
+  geom_bar(aes(fill=Location),stat="identity",position=position_dodge(width=.5),width=.5) +
+  theme(legend.position="bottom") + ylab("Absolute Bias") +
+  scale_fill_brewer(palette="Dark2")
+```
+
+# Results
+
+```{r process_results}
+load("2021-09-19_params.RData")
+load("2021-09-19_simulations.RData")
+# Rename old so won't be overwritten
+results_old <- results
+nrep <- dim(results[[1]])[1] ## Figure out nrep
+rm(results)
+
+## Process the output
+output_old <- as_tibble(my.params) %>% 
+  bind_cols(tibble(data=lapply(lapply(results_old,as_tibble),cbind,'rep'=1:nrep))) %>%
+  unnest(cols=data) %>% filter(!Scenario%in%paste0('D.',1:8))
+
+# Updated D.x:
+load("2021-09-20_params.RData")
+load("2021-09-20_simulations.RData")
+results_new <- results
+rm(results)
+output_new <- as_tibble(my.params) %>% 
+  bind_cols(tibble(data=lapply(lapply(results_new,as_tibble),cbind,'rep'=1:nrep))) %>%
+  unnest(cols=data)
+
+## Bind the two back together:
+output <- bind_rows(output_old,output_new)
+rm(output_old,output_new)
+
+## Compute the diff-in-diff for the possible controls:
+indiv.reps <- output %>% select(Scenario,contains("covid"),rep) %>%
+  pivot_longer(Ctrl_NotSelected_covid_1:PCF_Selected_nocovid_5,names_to="covid") %>%
+  separate(covid,into=c('group','mkt','covid','year')) %>%
+  unite("groupmkt",group,mkt) %>%
+  pivot_wider(names_from=groupmkt,values_from=value) %>%
+  mutate(External=PCF_Selected-Ctrl_NotSelected,
+         Internal=PCF_Selected-Ctrl_Selected) %>%
+  select(Scenario,rep,covid,year,External,Internal) %>%
+  pivot_longer(External:Internal,names_to="controls",values_to="value") %>%
+  mutate(abs.bias=abs(value)) %>% rename(bias=value) %>%
+  mutate(controls=factor(controls,levels=c('External','Internal')))
+
+summary.stats <- indiv.reps %>%
+  group_by(Scenario,controls,covid,year) %>%
+  summarize(mean.abs.bias=mean(abs.bias),
+            abs.mean.bias=abs(mean(bias)),
+            mean.bias=mean(bias),
+            sd=sd(bias),
+            rmse=sqrt(mean(bias^2))) %>%
+  pivot_longer(mean.abs.bias:rmse,names_to="statistic")
+
+indiv.reps <- indiv.reps %>%
+  pivot_longer(abs.bias:bias,names_to="statistic")
+
+## Get the provider count results:
+count.summary.stats <- output %>% select(Scenario,contains("prov.count"),rep) %>%
+  group_by(Scenario) %>% summarize_at(1:3,list(mean=mean,sd=sd))
+  
+
+## Save results to file for Mathematica
+if (F) {
+  write_csv(summary.stats,"2021-09-19_simulation_summaries.csv")
+  write_csv(count.summary.stats,'2021-09-19_simulation_count_summaries.csv')
+}
+```
+
+```{r plot_results_compact,fig.width=8,fig.height=10}
+ggplot(filter(summary.stats,statistic=='rmse',year%in%c(1,3,5)),
+                   aes(x=Scenario,y=value,group=controls))+
+    geom_bar(aes(fill=controls),stat="identity",width=.5,position=position_dodge(width=.5)) + 
+    scale_fill_brewer(palette="Dark2") +
+    facet_grid(year~covid) + ggtitle("RMSE") +
+    theme(legend.position="bottom",axis.text.x=element_text(angle=45,hjust=1)) + xlab("Scenario") + ylab("")
+```
+
+
+```{r plotting_function}
+make.results.plots <- function(this.scenario){
+  panel1 <- ggplot(filter(summary.stats,
+                          Scenario==this.scenario,
+                          statistic%in%c('rmse','sd')),
+                   aes(x=year,y=value,group=interaction(year,controls)))+
+    geom_bar(aes(fill=controls),stat="identity",width=.5,position=position_dodge(width=.5)) + 
+    scale_fill_brewer(palette="Dark2") +
+    coord_flip() + ggtitle(paste("Scenario",this.scenario)) +
+    facet_grid(covid~statistic,scale="free") + 
+    theme(legend.position="bottom") + xlab("") + ylab("")
+  
+  ## Plot beeswarms instead so we see the variation across simulation replications
+  panel2 <- ggplot(filter(indiv.reps,
+                          Scenario==this.scenario,
+                          statistic%in%c('bias',"abs.bias")),
+                   aes(x=year,y=value,group=interaction(year,controls))) + 
+    geom_boxplot(aes(col=controls),position=position_dodge(width=.5),width=0.5,fill=NA) +
+    scale_color_brewer(palette="Dark2") + geom_hline(yintercept=0) + 
+    coord_flip() + 
+    facet_grid(covid~statistic,scale="free") +
+    theme(legend.position="bottom") + xlab("") + ylab("")
+  
+  
+  print(cowplot::plot_grid(panel1,panel2))
+}
+```
+ 
+```{r plot_results,fig.width=8}
+for (s in 1:dim(my.params)[1]) {
+  make.results.plots(this.scenario = my.params[s,'Scenario']) 
+}
+```
+
+# Discussion
+Per @singh_participation_2020, "Regions were selected by the Centers for Medicare and Medicaid Services (CMS) to participate in CPC+ on the basis of market penetration and alignment of interested payers’ goals and approaches with CMS’ goals and approaches for CPC+." Based only on this description, it is difficult to speculate how they would differ in level and trend from the non-selected regions. Using the data from CPC+ triple diff, the intercepts and slopes in CPC+ regions were higher than non-CPC+ regions.
+
+In the CPC+ evaluation, matched regions were chosen to be geographically close to an intervention region and qualitatively similar to one more intervention regions, without obviously distinctive policies (e.g., Maryland) or cultural/geographic factors (e.g., Alaska). Matched practices from matched regions showed compelling overlap in levels and trends and no differences after the introduction of the intervention.[@peikes_independent_2019, Figure 5.1]
+
+The concern for market-level selection, i.e., the spending trends in the selected regions differ in systematic and unobservable ways from other regions, would either arise from bad luck or some hidden mechanism in the selection process. The probability of a "bad luck" draw of regions is now much higher due to market-level shocks of the pandemic.
+
+The within-market selection forces arise thanks to the voluntary nature of the program. In CPC+, within-region participation rates varied markedly, from 2% to 34% of practices. Practices that applied were larger, more likely to be owned by a health system or hospital, had more advanced EHR implementation, and more experience with alternative payment models. Applicant practices also served poulations that were socially advantaged (more white, fewer duals) and healthier (fewer chronic conditions, lower spending, fewer ED visits and hospitalizations).[@singh_participation_2020] The selection process further exaggerated these differences, leading to a group of participants that were particularly large, well-resourced, integrated, experienced with alternative payment models, and serving advantaged beneficiaries. 
+
+All of these observable differences can be ameliorated by regression, weighting, or matching. However, even after conditioning on observables, participating practices may be different from non-participating practices in unobservable ways. These differences threaten a within-market diff-in-diff if they are related to outcome trends. We know from preliminary analyses that spending levels and trends are negatively correlated at both the regional and practice levels. Thus, merely from this correlation and the lower baseline spending in participating practices, we would expect them to have steeper spending growth. 
+
+
+## References

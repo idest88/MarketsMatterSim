@@ -1,0 +1,225 @@
+---
+title: "Results figures for EDR Appendix"
+author: "Lauren Forrow"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(magrittr)
+library(openxlsx)
+library(ggh4x)
+```
+
+## Goal
+
+This script creates figures to include in the EDR appendix/manuscript describing Laura Hatfield's simulations comparing internal and external comparison group designs.  Because the target journal limits the number of figures, we want to be clear and compact.
+
+## Inputs
+
+Read in the final simulation output, along with the file describing each scenario
+```{r inputs}
+dir_root <- "N:/Project/50886_Primary_Care_First/Restricted/SASFARM/DATA/Impacts/Matching/PCFG/Simulations"
+sim_res <- read.csv(file.path(dir_root, "Data", "2021-09-20_simulation_summaries.csv"))
+sim_pars <- read.xlsx(file.path(dir_root, "Data", "2021-09-19_matching_scenarios_params.xlsx"), sheet = "Sheet1")
+```
+
+## Processing
+
+Create bias squared and variance elements as components of MSE, and check against actual RMSE.
+```{r}
+sim_res_wide <- sim_res %>%
+  pivot_wider(names_from = "statistic", values_from = "value") %>%
+  mutate(bias_sq = `abs.mean.bias`^2,
+         var = sd^2,
+         check = rmse - sqrt(bias_sq + var),
+         group_lab = factor(ifelse(controls == "External", "Out-of-market", "Within-market"),
+                            levels = c("Within-market", "Out-of-market")))
+
+summary(sim_res_wide$check)
+```
+
+That's pretty close.  Reformat long.
+```{r}
+sim_res_long <- sim_res_wide %>%
+  select(-check) %>%
+  pivot_longer(mean.abs.bias:var, names_to = "statistic", values_to = "value")
+```
+
+
+Merge the parameters information onto the results.
+```{r}
+pars_wider <- sim_pars %>%
+  select(-X4)%>%
+  mutate(Param = gsub("\\.", "", Param)) %>% #drop punctuation to make easier colnames
+  pivot_wider(names_from = "Param", values_from = "Value")
+
+full_res <- sim_res_long %>%
+  left_join(pars_wider, by = "Scenario")
+  
+```
+
+Clean up labels for plotting.
+```{r}
+full_res %<>%
+  mutate(stat_lab = factor(case_when(statistic == "mean.abs.bias"      ~ "MAB",
+                                     statistic == "abs.mean.bias"      ~ "AMB",
+                                     statistic == "mean.bias"          ~ "Mean bias",
+                                     statistic == "sd"                 ~ "Standard deviation",
+                                     statistic == "rmse"               ~ "RMSE",
+                                     statistic == "bias_sq"            ~ "Squared bias", 
+                                     statistic == "var"                ~ "Variance"), 
+                           levels = c("Mean bias", "MAB", "AMB", "Standard deviation", "RMSE", 
+                                      "Variance", "Squared bias")),
+         year_lab = paste("Year", year),
+         cov_lab = factor(ifelse(covid == "covid", "With COVID-19", "Without COVID-19"),
+                          levels = c("Without COVID-19", "With COVID-19")))
+```
+
+
+## Plots
+
+### Main text
+
+For the main text of the EDR appendix/manuscript, we want to show just a small number of scenarios that illustrate our main point.  For the appendix, we want to show more of a range.
+
+Compact version.
+```{r, fig.width = 8, fig.height = 5}
+full_res %>% 
+  filter(statistic %in% c("bias_sq", "var"), 
+         year %in% c(1, 5),
+         Scenario %in% c("C.1.1", "B.3.1")) %>%  #drop D.1 break-even
+  # mutate(scen_num = as.numeric(as.factor(Scenario)),
+  #        scen_lab = paste("Scenario", scen_num))%>%
+  mutate(scen_lab = factor(case_when(Scenario == "C.1.1"     ~ "Moderate participation bias",
+                              Scenario == "B.3.1"     ~ "Equal slope differences"),
+                           levels = c("Equal slope differences", "Moderate participation bias"))) %>%
+  ggplot(., aes(x = group_lab, y = value, fill = stat_lab)) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_col(color = "black") +
+  facet_nested(cov_lab~scen_lab + year_lab) +
+  ylab("Mean squared error") +
+  xlab("Comparison group") +
+  scale_fill_manual(name = "Source of error", values = c("#0b2949", "#d9e8f9"), breaks = c("Squared bias", "Variance"))
+
+ggsave(file.path(dir_root, "Output", "results_fig_compact3_mprcolors.png"), height = 5, width = 8, units = 'in', dpi = 450)
+```
+
+Fuller version.
+```{r, fig.width = 9, fig.height = 6}
+full_res %>% 
+  filter(statistic %in% c("mean.abs.bias", "rmse"), 
+         year %in% c(1, 5),
+         Scenario %in% c("B.2.1", "B.3.1", "D.1")) %>%
+  # mutate(scen_num = as.numeric(as.factor(Scenario)),
+  #        scen_lab = paste("Scenario", scen_num))%>%
+  mutate(scen_lab = factor(case_when(Scenario == "B.1.1"     ~ "Parallel out-of-market",
+                              Scenario == "B.3.1"     ~ "Equal slope differences",
+                              Scenario == "D.1"       ~ "Break-even"),
+                           levels = c("Parallel out-of-market", "Equal slope differences", "Break-even"))) %>%
+  ggplot(., aes(x = stat_lab, y = value, fill = group_lab)) +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  geom_col(position = position_dodge(width = 0.9)) +
+  facet_nested(cov_lab~scen_lab + year_lab) +
+  ylab(NULL) +
+  xlab(NULL) +
+  scale_fill_manual(name = "Comparison group", values = c("gray33", "gray67"))
+
+ggsave(file.path(dir_root, "Output", "results_fig_expanded2.png"), dpi = 450)
+```
+
+### For Appendix
+
+In the appendix, let's show almost all the scenarios, excluding only those that are duplicative.  Split up by scenarios where gamma is negative vs. positive, for those that have both.
+
+```{r, fig.width = 8, fig.height = 11}
+
+# create scenario labels that are consistent between figures
+
+scen_map <- full_res %>% 
+  filter(!(Scenario %in% c("D.4", "D.5", "D.7"))) %>%  #drop a few duplicative ones
+  mutate(scen_num = as.numeric(as.factor(Scenario)),
+         scen_lab = factor(paste("Scenario", scen_num),
+                           levels = paste("Scenario", 1:max(scen_num)))) %>%
+  distinct(scen_num, scen_lab, Scenario, gamma2, theta2)%>%
+  select(scen_num, scen_lab, Scenario, gamma2, theta2)
+
+scen_map %>%
+  #put parameters on annual scale
+  mutate(gamma2 = 4*gamma2,
+         theta2 = 4*theta2)%>%
+  write.csv(., file = file.path(dir_root, "Output", "scenario_numbers.csv"), row.names = FALSE)
+
+```
+
+Scenarios with small participation bias
+```{r, fig.height = 10, fig.width = 8}
+full_res %>% 
+  filter(statistic %in% c("bias_sq", "var"), 
+         year %in% c(1, 5),
+         !(Scenario %in% c("D.4", "D.5", "D.7"))) %>%  #drop a few duplicative ones
+  left_join(scen_map, by = "Scenario") %>%
+  filter(scen_num %in% 1:6)%>%
+  ggplot(., aes(x = group_lab, y = value, fill = stat_lab)) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_col(color = "black") +
+  facet_nested(scen_lab ~ cov_lab + year_lab) +
+  ylab("Mean squared error") +
+  xlab("Comparison group") +
+  scale_fill_manual(name = "Source of error", values = c("#0b2949", "#d9e8f9"), breaks = c("Squared bias", "Variance"))
+
+ggsave(file.path(dir_root, "Output", "results_fig_all_small_mprcolors.png"), height = 10, width = 8, units = 'in', dpi = 450)
+```
+
+Scenarios with moderate participation bias
+```{r, fig.height = 10, fig.width = 8}
+full_res %>% 
+  filter(statistic %in% c("bias_sq", "var"), 
+         year %in% c(1, 5),
+         !(Scenario %in% c("D.4", "D.5", "D.7"))) %>%  #drop a few duplicative ones
+  left_join(scen_map, by = "Scenario") %>%
+  filter(scen_num %in% 7:12)%>%
+  ggplot(., aes(x = group_lab, y = value, fill = stat_lab)) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_col(color = "black") +
+  facet_nested(scen_lab ~ cov_lab + year_lab) +
+  ylab("Mean squared error") +
+  xlab("Comparison group") +
+  scale_fill_manual(name = "Source of error", values = c("#0b2949", "#d9e8f9"), breaks = c("Squared bias", "Variance"))
+
+ggsave(file.path(dir_root, "Output", "results_fig_all_mod_mprcolors.png"), height = 10, width = 8, units = 'in', dpi = 450)
+```
+
+"Break-even" scenarios
+```{r, fig.height = 10, fig.width = 8}
+full_res %>% 
+  filter(statistic %in% c("bias_sq", "var"), 
+         year %in% c(1, 5),
+         !(Scenario %in% c("D.4", "D.5", "D.7"))) %>%  #drop a few duplicative ones
+  left_join(scen_map, by = "Scenario") %>%
+  filter(scen_num %in% 13:max(scen_num))%>%
+  ggplot(., aes(x = group_lab, y = value, fill = stat_lab)) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_col(color = "black") +
+  facet_nested(scen_lab ~ cov_lab + year_lab) +
+  ylab("Mean squared error") +
+  xlab("Comparison group") +
+  scale_fill_manual(name = "Source of error", values = c("#0b2949", "#d9e8f9"), breaks = c("Squared bias", "Variance"))
+
+ggsave(file.path(dir_root, "Output", "results_fig_all_breakeven_mprcolors.png"), height = 8, width = 8, units = 'in', dpi = 450)
+```
+
